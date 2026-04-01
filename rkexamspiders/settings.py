@@ -136,6 +136,12 @@ XISAI_CRAWL_TASKS = [
         "exam_root_name": "软考",
         "paper_type": "62",
     },
+    {
+        "subject_name": "软件评测师",
+        "exam_root_name": "软考",
+        "paper_type": "60",
+        "filter_keywords": ["2026", "2025", "2024"],
+    },
 ]
 
 # 是否跳过已抓取的试卷（按 output/科目/题型/试卷名.json 是否存在判断）

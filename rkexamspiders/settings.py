@@ -21,11 +21,6 @@ ADDONS = {}
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
-# Concurrency and throttling settings
-CONCURRENT_REQUESTS = 32                    # 全局并发提高
-CONCURRENT_REQUESTS_PER_DOMAIN = 16         # 单域名并发翻倍
-DOWNLOAD_DELAY = 0.2                        # 延迟从1秒降到0.2秒
-
 # Disable cookies (enabled by default)
 #COOKIES_ENABLED = False
 
@@ -73,7 +68,10 @@ ITEM_PIPELINES = {
 # each remote server
 #AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
 # Enable showing throttling stats for every response received:
-#AUTOTHROTTLE_DEBUG = False
+# AUTOTHROTTLE_DEBUG = False
+CONCURRENT_REQUESTS = 32                    # 全局并发提高
+CONCURRENT_REQUESTS_PER_DOMAIN = 16         # 单域名并发翻倍
+DOWNLOAD_DELAY = 0.2                        # 延迟从1秒降到0.2秒
 
 # Enable and configure HTTP caching (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
@@ -114,33 +112,32 @@ FEED_EXPORT_ENCODING = "utf-8"
 # 如果不直接配置 XISAI_SUBJECT_PATH，可配置科目名称自动解析。
 # 例如：XISAI_EXAM_ROOT_NAME = "软考"、XISAI_SUBJECT_NAME = "系统架构设计师"
 # XISAI_EXAM_ROOT_NAME 可选，不填则在整棵树中按名称查找。
-XISAI_SUBJECT_NAME = "系统架构设计师"
-XISAI_EXAM_ROOT_NAME = "软考"
+# XISAI_SUBJECT_NAME = "系统架构设计师"
+# XISAI_EXAM_ROOT_NAME = "软考"
 
 # PAPER_TYPE: 试卷类型
 # 仅支持：125=知识点练习, 63=模拟试卷, 62=章节练习, 60=历年真题
 # 其中 60/62/63 使用同一试卷列表与解析流程；125 使用知识点章节接口。
-XISAI_PAPER_TYPE = "60"
+# XISAI_PAPER_TYPE = "60"
 
 # 多任务配置（推荐）：一次启动抓多个科目和不同题型。
 # 每项必须包含：paper_type + (subject_path 或 subject_name)
+# 账号密码按 subject_name 自动从 config.toml [xisai."科目名"] 读取。
+# filter_keywords 为任务级过滤，仅对 paper_type=60（历年真题）生效，不填则不过滤。
 XISAI_CRAWL_TASKS = [
     {
-        "subject_name": "系统架构设计师",
+        "subject_name": "软件设计师",
         "exam_root_name": "软考",
         "paper_type": "60",
+        "filter_keywords": ["2026", "2025", "2024"],
     },
     {
-        "subject_name": "系统架构设计师",
+        "subject_name": "软件设计师",
         "exam_root_name": "软考",
         "paper_type": "62",
-    },
-    {
-        "subject_name": "系统架构设计师",
-        "exam_root_name": "软考",
-        "paper_type": "125",
     },
 ]
 
 # 是否跳过已抓取的试卷（按 output/科目/题型/试卷名.json 是否存在判断）
 XISAI_SKIP_EXISTING_PAPERS = True
+

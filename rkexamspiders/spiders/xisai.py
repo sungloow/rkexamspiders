@@ -19,6 +19,7 @@ import logger as _logger_setup  # noqa: F401  触发 setup_logging()，使 xisai
 
 # ── 工具函数 ──────────────────────────────────────────────
 
+
 def get_uuid() -> int:
     return uuid.uuid4().int & (10**8 - 1)
 
@@ -82,9 +83,11 @@ class XisaiSpider(scrapy.Spider):
         "63": "模拟试卷",
         "62": "章节练习",
         "60": "历年真题",
+        "203817": "模拟考试",
     }
     PAPER_LIST_TYPES = {"60", "62", "63"}
     KNOWLEDGE_TYPE = "125"
+    MOKAO = "203817"
 
     _COMMON_HEADERS = {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -248,13 +251,16 @@ class XisaiSpider(scrapy.Spider):
         spider = super().from_crawler(crawler, *args, **kwargs)
 
         from config import get_config
+
         try:
             cfg = get_config()
         except Exception as exc:
             raise NotConfigured(f"读取 config.toml 失败：{exc}") from exc
 
         spider._auth_contexts = {}  # username -> auth dict，已登录账号复用
-        spider._xisai_accounts = cfg.get("xisai", {})  # subject_name -> {username, password}
+        spider._xisai_accounts = cfg.get(
+            "xisai", {}
+        )  # subject_name -> {username, password}
 
         spider.CRAWL_TASKS = spider._load_crawl_tasks(crawler)
 
@@ -289,28 +295,40 @@ class XisaiSpider(scrapy.Spider):
                 task_list.append(self._normalize_task(raw, idx))
         else:
             single_task = {
-                "subject_path": self.subject_path_arg or crawler.settings.get("XISAI_SUBJECT_PATH"),
-                "subject_name": self.subject_name_arg or crawler.settings.get("XISAI_SUBJECT_NAME"),
-                "exam_root_name": self.exam_root_name_arg or crawler.settings.get("XISAI_EXAM_ROOT_NAME"),
-                "paper_type": self.paper_type_arg or crawler.settings.get("XISAI_PAPER_TYPE"),
+                "subject_path": self.subject_path_arg
+                or crawler.settings.get("XISAI_SUBJECT_PATH"),
+                "subject_name": self.subject_name_arg
+                or crawler.settings.get("XISAI_SUBJECT_NAME"),
+                "exam_root_name": self.exam_root_name_arg
+                or crawler.settings.get("XISAI_EXAM_ROOT_NAME"),
+                "paper_type": self.paper_type_arg
+                or crawler.settings.get("XISAI_PAPER_TYPE"),
             }
             task_list.append(self._normalize_task(single_task, 1))
 
         return task_list
 
     def _normalize_task(self, raw: dict, idx: int) -> dict:
-        subject_path = str(raw["subject_path"]).strip() if raw.get("subject_path") else None
-        subject_name = str(raw["subject_name"]).strip() if raw.get("subject_name") else None
-        exam_root_name = str(raw["exam_root_name"]).strip() if raw.get("exam_root_name") else None
+        subject_path = (
+            str(raw["subject_path"]).strip() if raw.get("subject_path") else None
+        )
+        subject_name = (
+            str(raw["subject_name"]).strip() if raw.get("subject_name") else None
+        )
+        exam_root_name = (
+            str(raw["exam_root_name"]).strip() if raw.get("exam_root_name") else None
+        )
         paper_type = str(raw["paper_type"]).strip() if raw.get("paper_type") else None
 
         if not subject_path and not subject_name:
-            raise NotConfigured(f"任务 {idx} 缺少科目配置：请提供 subject_path 或 subject_name")
+            raise NotConfigured(
+                f"任务 {idx} 缺少科目配置：请提供 subject_path 或 subject_name"
+            )
         if not paper_type:
             raise NotConfigured(f"任务 {idx} 缺少题型配置：请提供 paper_type")
         if paper_type not in self.PAPER_TYPE_NAME_MAP:
             raise NotConfigured(
-                f"任务 {idx} 的 paper_type={paper_type} 暂不支持，仅支持 60/62/63/125"
+                f"任务 {idx} 的 paper_type={paper_type} 暂不支持，仅支持 203817/60/62/63/125"
             )
 
         # 按 subject_name 从 config.toml [xisai."科目名"] 查找账号密码
@@ -319,7 +337,7 @@ class XisaiSpider(scrapy.Spider):
         password = acct.get("password")
         if not username or not password:
             raise NotConfigured(
-                f"任务 {idx}（{subject_name}）在 config.toml [xisai.\"{subject_name}\"] 中未找到账号配置"
+                f'任务 {idx}（{subject_name}）在 config.toml [xisai."{subject_name}"] 中未找到账号配置'
             )
 
         # 任务级过滤关键字，不填则不过滤
@@ -453,7 +471,9 @@ class XisaiSpider(scrapy.Spider):
                 root_msg = f"（根节点={root_name}）" if root_name else ""
                 raise CloseSpider(f"未找到科目：{target_name}{root_msg}")
 
-            classify_id = match_node.get("classifyId") or match_node.get("examClassifyId")
+            classify_id = match_node.get("classifyId") or match_node.get(
+                "examClassifyId"
+            )
             if not classify_id:
                 raise CloseSpider(f"科目缺少 classifyId：{target_name}")
 
@@ -461,9 +481,148 @@ class XisaiSpider(scrapy.Spider):
             task["subject_name"] = str(match_node.get("name") or target_name)
             self.logger.info(
                 "任务 %s 自动解析科目：name=%s, subject_path=%s, paper_type=%s",
-                task["task_id"], task["subject_name"], task["subject_path"], task["paper_type"],
+                task["task_id"],
+                task["subject_name"],
+                task["subject_path"],
+                task["paper_type"],
             )
             yield from self._start_task_requests(task)
+
+    def _parse_mokao_act_detail(self, response, task: dict, act_id: str):
+        data = response.json()
+        paper_list_raw = data.get("model", {}).get("paperList")
+        if not isinstance(paper_list_raw, list):
+            self.logger.warning(
+                "任务 %s actDetail 响应异常，model.paperList 不是列表：%s",
+                task["task_id"],
+                response.text[:200],
+            )
+            return
+        papers = []
+        for item in paper_list_raw:
+            if item.get("paperId"):
+                papers.append({"id": item["paperId"], "paperName": item.get("title") or str(item["paperId"])})
+            if item.get("jointPaperId"):
+                papers.append({"id": item["jointPaperId"], "paperName": item.get("jointTitle") or str(item["jointPaperId"])})
+        for paper in papers:
+            yield from self._mokao_paper_requests(paper, task, act_id)
+
+    def _mokao_act_detail_request(self, act_id, task: dict):
+        return scrapy.Request(
+            url=f"{self.BASE_URL}/act/actDetail.do",
+            method="POST",
+            headers=self._headers(task, f"{self.FRONT_URL}/sub/paper/testDetail/testDetail"),
+            body=urlencode({"actId": act_id, "isNeedOver": "N"}),
+            cookies=self._cookies(task),
+            callback=self._parse_mokao_act_detail,
+            cb_kwargs={"task": task, "act_id": act_id},
+        )
+
+    def _parse_paper_list_mokao(self, response, task: dict, page: int):
+        data = response.json()
+        model = data.get("model", {})
+        datas = model.get("datas", [])
+        if not datas:
+            self.logger.info(
+                "任务 %s 第 %s 页无数据，列表抓取完毕", task["task_id"], page
+            )
+            return
+
+        for item in datas:
+            if item.get("state") != "book" and item.get("typeName") == "模考":
+                yield self._mokao_act_detail_request(item["id"], task)
+
+        total_pages = model.get("totalPages", 1)
+        if page < total_pages:
+            yield self._paper_list_mokao(task=task, page=page + 1)
+        else:
+            self.logger.info("任务 %s 模拟考试列表抓取完毕（共 %s 页）", task["task_id"], total_pages)
+
+    def _mokao_paper_requests(self, paper_meta: dict, task: dict, act_id: str):
+        if self.SKIP_EXISTING_PAPERS:
+            file_path = build_output_file_path(
+                subject_name=task.get("subject_name"),
+                subject_path=task.get("subject_path"),
+                paper_type_name=task["paper_type_name"],
+                paper_type=task["paper_type"],
+                paper_name=paper_meta["paperName"],
+                paper_id=paper_meta["id"],
+            )
+            if file_path.exists():
+                self.logger.info(
+                    "任务 %s 跳过已存在试卷：%s", task["task_id"], file_path
+                )
+                return
+        yield self._check_zuoti_request_mokao(paper_meta, task, act_id)
+    
+    def _check_zuoti_request_mokao(self, paper_meta: dict, task: dict, act_id: str):
+        paper_id = str(paper_meta["id"])
+        referer = f"{self.FRONT_URL}/sub/jikao/rule/rule?paperId={paper_id}&actId={act_id}&subjectPath={task['subject_path']}&lkPaperId={paper_id}"
+        return scrapy.Request(
+            url=f"{self.BASE_URL}/user/checkZuoti.do",
+            method="POST",
+            headers=self._headers(task, referer),
+            body=urlencode(
+                {
+                    "subjectPath": task["subject_path"],
+                    "paperType": task["paper_type"],
+                    "dataId": paper_id,
+                }
+            ),
+            cookies=self._cookies(task),
+            callback=self.start_exam_mokao,
+            cb_kwargs={"paper_meta": paper_meta, "task": task, "act_id": act_id},
+        )
+    
+    def start_exam_mokao(self, response, paper_meta: dict, task: dict, act_id: str):
+        body = response.json()
+        if body.get("resultCode") != "SUCCESS":
+            self.logger.warning(
+                "检查权限失败，paperId=%s，响应：%s", paper_meta["id"], response.text
+            )
+            return
+
+        key = body.get("model", {}).get("key")
+        if not key:
+            self.logger.warning("未获取到 key，paperId=%s", paper_meta["id"])
+            return
+
+        paper_id = str(paper_meta["id"])
+        paper_name = paper_meta["paperName"]
+        referer = f"{self.FRONT_URL}/sub/jikao/rule/rule?paperId={paper_id}&actId={act_id}&subjectPath={task['subject_path']}&lkPaperId={paper_id}"
+        yield scrapy.Request(
+            url=f"{self.BASE_URL}/ucenter/act/actStartExam.do",
+            method="POST",
+            headers=self._headers(task, referer),
+            body=urlencode(
+                {
+                    "actId": act_id,
+                    "paperId": paper_id,
+                    "subjectPath": task["subject_path"],
+                }
+            ),
+            cookies=self._cookies(task),
+            callback=self.load_scantron,
+            cb_kwargs={"paper_meta": paper_meta, "task": task},
+        )
+
+    def _paper_list_mokao(self, task: dict, page: int):
+        return scrapy.Request(
+            url=f"{self.BASE_URL}/act/actList.do",
+            method="POST",
+            headers=self._headers(task, f"{self.FRONT_URL}/"),
+            body=urlencode(
+                {
+                    "subjectPath": task["subject_path"],
+                    "pageNum": str(page),
+                    "pageSize": "5",
+                    "status": "running",
+                }
+            ),
+            cookies=self._cookies(task),
+            callback=self._parse_paper_list_mokao,
+            cb_kwargs={"task": task, "page": page},
+        )
 
     def _start_task_requests(self, task: dict):
         paper_type = task.get("paper_type")
@@ -471,8 +630,12 @@ class XisaiSpider(scrapy.Spider):
             yield self._paper_list_request(page=1, task=task)
         elif paper_type == self.KNOWLEDGE_TYPE:
             yield self._knowledge_section_request(task=task)
+        elif paper_type == self.MOKAO:
+            yield self._paper_list_mokao(task=task, page=1)
         else:
-            raise CloseSpider(f"任务 {task.get('task_id')} 的题型 {paper_type} 暂不支持")
+            raise CloseSpider(
+                f"任务 {task.get('task_id')} 的题型 {paper_type} 暂不支持"
+            )
 
     def _find_subject_node(self, nodes, target_name: str, root_name: str = None):
         search_nodes = nodes
@@ -499,12 +662,14 @@ class XisaiSpider(scrapy.Spider):
             url=f"{self.BASE_URL}/tiku/paper/list.do",
             method="POST",
             headers=self._headers(task, f"{self.FRONT_URL}/"),
-            body=urlencode({
-                "subjectPath": task["subject_path"],
-                "paperType": task["paper_type"],
-                "pageNum": str(page),
-                "pageSize": "20",
-            }),
+            body=urlencode(
+                {
+                    "subjectPath": task["subject_path"],
+                    "paperType": task["paper_type"],
+                    "pageNum": str(page),
+                    "pageSize": "20",
+                }
+            ),
             cookies=self._cookies(task),
             callback=self.parse_paper_list,
             cb_kwargs={"page": page, "task": task},
@@ -526,12 +691,16 @@ class XisaiSpider(scrapy.Spider):
         data = response.json()
         papers = data.get("model", {}).get("datas", [])
         if not papers:
-            self.logger.info("任务 %s 第 %s 页无数据，列表抓取完毕", task["task_id"], page)
+            self.logger.info(
+                "任务 %s 第 %s 页无数据，列表抓取完毕", task["task_id"], page
+            )
             return
 
         self.logger.info(
             "任务 %s 第 %s 页获取到 %s 套试卷（科目=%s, 题型=%s）",
-            task["task_id"], page, len(papers),
+            task["task_id"],
+            page,
+            len(papers),
             task.get("subject_name") or task.get("subject_path"),
             task["paper_type_name"],
         )
@@ -539,10 +708,13 @@ class XisaiSpider(scrapy.Spider):
         filter_keywords = task.get("filter_keywords") or []
         if filter_keywords:
             papers = [
-                p for p in papers
+                p
+                for p in papers
                 if any(kw in (p.get("paperName") or "") for kw in filter_keywords)
             ]
-            self.logger.info("任务 %s 关键字过滤后剩余 %s 套试卷", task["task_id"], len(papers))
+            self.logger.info(
+                "任务 %s 关键字过滤后剩余 %s 套试卷", task["task_id"], len(papers)
+            )
 
         for p in papers:
             if self.SKIP_EXISTING_PAPERS:
@@ -555,7 +727,9 @@ class XisaiSpider(scrapy.Spider):
                     paper_id=p.get("id"),
                 )
                 if file_path.exists():
-                    self.logger.info("任务 %s 跳过已存在试卷：%s", task["task_id"], file_path)
+                    self.logger.info(
+                        "任务 %s 跳过已存在试卷：%s", task["task_id"], file_path
+                    )
                     continue
             yield self._check_zuoti_request(p, task)
 
@@ -570,7 +744,8 @@ class XisaiSpider(scrapy.Spider):
 
         self.logger.info(
             "任务 %s 获取到 %s 个知识点大节（科目=%s）",
-            task["task_id"], len(sections),
+            task["task_id"],
+            len(sections),
             task.get("subject_name") or task.get("subject_path"),
         )
 
@@ -593,7 +768,9 @@ class XisaiSpider(scrapy.Spider):
                     paper_id=section_id,
                 )
                 if file_path.exists():
-                    self.logger.info("任务 %s 跳过已存在知识点大节：%s", task["task_id"], file_path)
+                    self.logger.info(
+                        "任务 %s 跳过已存在知识点大节：%s", task["task_id"], file_path
+                    )
                     continue
 
             section_meta = {"id": section_id, "paperName": section_name}
@@ -612,11 +789,13 @@ class XisaiSpider(scrapy.Spider):
             url=f"{self.BASE_URL}/user/checkZuoti.do",
             method="POST",
             headers=self._headers(task, referer),
-            body=urlencode({
-                "subjectPath": task["subject_path"],
-                "paperType": task["paper_type"],
-                "dataId": paper_id,
-            }),
+            body=urlencode(
+                {
+                    "subjectPath": task["subject_path"],
+                    "paperType": task["paper_type"],
+                    "dataId": paper_id,
+                }
+            ),
             cookies=self._cookies(task),
             callback=self.start_exam,
             cb_kwargs={"paper_meta": paper_meta, "task": task},
@@ -647,14 +826,16 @@ class XisaiSpider(scrapy.Spider):
             url=f"{self.BASE_URL}/zuoti/startExam.do",
             method="POST",
             headers=self._headers(task, referer),
-            body=urlencode({
-                "subjectPath": task["subject_path"],
-                "paperType": task["paper_type"],
-                "dataId": paper_id,
-                "testModel": "Exercise",
-                "paperName": paper_name,
-                "key": key,
-            }),
+            body=urlencode(
+                {
+                    "subjectPath": task["subject_path"],
+                    "paperType": task["paper_type"],
+                    "dataId": paper_id,
+                    "testModel": "Exercise",
+                    "paperName": paper_name,
+                    "key": key,
+                }
+            ),
             cookies=self._cookies(task),
             callback=self.load_scantron,
             cb_kwargs={"paper_meta": paper_meta, "task": task},
@@ -663,22 +844,30 @@ class XisaiSpider(scrapy.Spider):
     # ── 第四步：加载答题卡（含加密题目）─────────────────────
 
     def load_scantron(self, response, paper_meta: dict, task: dict):
-        paper_log_id = response.json().get("model", {}).get("paperLogId")
+        paper_log_id = response.json().get("model")
+        if isinstance(paper_log_id, dict):
+            paper_log_id = response.json().get("model", {}).get("paperLogId")
         if not paper_log_id:
             self.logger.warning(
-                "未获取到 paperLogId，paperId=%s，响应：%s", paper_meta["id"], response.text
+                "未获取到 paperLogId，paperId=%s，响应：%s",
+                paper_meta["id"],
+                response.text,
             )
             return
 
-        referer = f"{self.FRONT_URL}/sub/exam/answerKey/answerKey?paperLogId={paper_log_id}"
+        referer = (
+            f"{self.FRONT_URL}/sub/exam/answerKey/answerKey?paperLogId={paper_log_id}"
+        )
         yield scrapy.Request(
             url=f"{self.BASE_URL}/zuoti/loadScantron.do",
             method="POST",
             headers=self._headers(task, referer),
-            body=urlencode({
-                "paperLogId": paper_log_id,
-                "subjectPath": task["subject_path"],
-            }),
+            body=urlencode(
+                {
+                    "paperLogId": paper_log_id,
+                    "subjectPath": task["subject_path"],
+                }
+            ),
             cookies=self._cookies(task),
             callback=self.parse_scantron,
             cb_kwargs={
@@ -708,7 +897,8 @@ class XisaiSpider(scrapy.Spider):
         if not isinstance(questions_raw, list):
             self.logger.warning(
                 "解密结果不是预期列表结构，paperId=%s，类型=%s",
-                paper_meta["id"], type(questions_raw),
+                paper_meta["id"],
+                type(questions_raw),
             )
             return
 
@@ -717,7 +907,9 @@ class XisaiSpider(scrapy.Spider):
             for group in questions_raw
             if isinstance(group, dict)
         )
-        self.logger.info("试卷 [%s] 共解析到 %s 题", paper_meta["paperName"], total_count)
+        self.logger.info(
+            "试卷 [%s] 共解析到 %s 题", paper_meta["paperName"], total_count
+        )
 
         buffer_key = self._init_paper_buffer(paper_meta, total_count, task)
         if total_count == 0:
@@ -765,10 +957,12 @@ class XisaiSpider(scrapy.Spider):
                     url=f"{self.BASE_URL}/zuoti/analysis.do",
                     method="POST",
                     headers=self._headers(task, referer),
-                    body=urlencode({
-                        "paperLogId": paper_log_id,
-                        "stId": str(item["question_id"]),
-                    }),
+                    body=urlencode(
+                        {
+                            "paperLogId": paper_log_id,
+                            "stId": str(item["question_id"]),
+                        }
+                    ),
                     cookies=self._cookies(task),
                     callback=self.parse_analysis,
                     cb_kwargs={
@@ -779,7 +973,7 @@ class XisaiSpider(scrapy.Spider):
                 )
 
     def parse_analysis(self, response, paper_meta: dict, item: dict, buffer_key: str):
-        model = (response.json().get("model") or {})
+        model = response.json().get("model") or {}
         item["answer"] = model.get("answer") or item.get("answer")
         item["analysis"] = model.get("analysis")
         paper_item = self._append_question(buffer_key, item)

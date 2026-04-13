@@ -125,22 +125,47 @@ FEED_EXPORT_ENCODING = "utf-8"
 # 账号密码按 subject_name 自动从 config.toml [xisai."科目名"] 读取。
 # filter_keywords 为任务级过滤，仅对 paper_type=60（历年真题）生效，不填则不过滤。
 XISAI_CRAWL_TASKS = [
+    # {
+    #     "subject_name": "软件设计师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "60",
+    #     "filter_keywords": ["2026", "2025", "2024"],
+    # },
+    # {
+    #     "subject_name": "软件设计师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "62",
+    # },
+    # {
+    #     "subject_name": "软件评测师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "60",
+    #     "filter_keywords": ["2026", "2025", "2024"],
+    # },
     {
-        "subject_name": "软件设计师",
+        "subject_name": "信息系统项目管理师",
         "exam_root_name": "软考",
-        "paper_type": "60",
-        "filter_keywords": ["2026", "2025", "2024"],
+        "paper_type": "00",
+    },
+    {
+        "subject_name": "系统架构设计师",
+        "exam_root_name": "软考",
+        "paper_type": "00",
+    },
+    {
+        "subject_name": "系统分析师",
+        "exam_root_name": "软考",
+        "paper_type": "00",
     },
     {
         "subject_name": "软件设计师",
         "exam_root_name": "软考",
-        "paper_type": "62",
+        "paper_type": "00",
     },
     {
         "subject_name": "软件评测师",
         "exam_root_name": "软考",
-        "paper_type": "60",
-        "filter_keywords": ["2026", "2025", "2024"],
+        "paper_type": "00",
     },
 ]
 

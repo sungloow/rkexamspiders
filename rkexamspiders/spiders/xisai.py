@@ -83,11 +83,11 @@ class XisaiSpider(scrapy.Spider):
         "63": "模拟试卷",
         "62": "章节练习",
         "60": "历年真题",
-        "00": "模拟考试",
+        "203817": "模拟考试",
     }
     PAPER_LIST_TYPES = {"60", "62", "63"}
     KNOWLEDGE_TYPE = "125"
-    MOKAO = "00"
+    MOKAO = "203817"
 
     _COMMON_HEADERS = {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -328,7 +328,7 @@ class XisaiSpider(scrapy.Spider):
             raise NotConfigured(f"任务 {idx} 缺少题型配置：请提供 paper_type")
         if paper_type not in self.PAPER_TYPE_NAME_MAP:
             raise NotConfigured(
-                f"任务 {idx} 的 paper_type={paper_type} 暂不支持，仅支持 60/62/63/125"
+                f"任务 {idx} 的 paper_type={paper_type} 暂不支持，仅支持 203817/60/62/63/125"
             )
 
         # 按 subject_name 从 config.toml [xisai."科目名"] 查找账号密码
@@ -488,65 +488,123 @@ class XisaiSpider(scrapy.Spider):
             )
             yield from self._start_task_requests(task)
 
-    def _parse_mokao_act_detail(self, response, task: dict):
+    def _parse_mokao_act_detail(self, response, task: dict, act_id: str):
         data = response.json()
-        model = data.get("model", {}).get("paperList")
-        if not isinstance(model, list):
-            raise CloseSpider("模拟考试详情响应异常：model 不是列表")
-        paper_list = []
-        for item in model:
-            paper_list.append({"id": item.get("paperId"), "paperName": item.get("title")})
-            paper_list.append({"id": item.get("jointPaperId"), "paperName": item.get("jointTitle")})
-        for paper in paper_list:
-            if self.SKIP_EXISTING_PAPERS:
-                file_path = build_output_file_path(
-                    subject_name=task.get("subject_name"),
-                    subject_path=task.get("subject_path"),
-                    paper_type_name=task["paper_type_name"],
-                    paper_type=task["paper_type"],
-                    paper_name=paper.get("paperName"),
-                    paper_id=paper.get("id"),
-                )
-                if file_path.exists():
-                    self.logger.info(
-                        "任务 %s 跳过已存在试卷：%s", task["task_id"], file_path
-                    )
-                    continue
-            yield self._check_zuoti_request(paper, task)
+        paper_list_raw = data.get("model", {}).get("paperList")
+        if not isinstance(paper_list_raw, list):
+            self.logger.warning(
+                "任务 %s actDetail 响应异常，model.paperList 不是列表：%s",
+                task["task_id"],
+                response.text[:200],
+            )
+            return
+        papers = []
+        for item in paper_list_raw:
+            if item.get("paperId"):
+                papers.append({"id": item["paperId"], "paperName": item.get("title") or str(item["paperId"])})
+            if item.get("jointPaperId"):
+                papers.append({"id": item["jointPaperId"], "paperName": item.get("jointTitle") or str(item["jointPaperId"])})
+        for paper in papers:
+            yield from self._mokao_paper_requests(paper, task, act_id)
 
-    def _mokao_act_detail_request(self, item: dict, task: dict):
+    def _mokao_act_detail_request(self, act_id, task: dict):
         return scrapy.Request(
             url=f"{self.BASE_URL}/act/actDetail.do",
             method="POST",
-            headers=self._headers(task, f"{self.FRONT_URL}/"),
-            body=urlencode(
-                {
-                    "actId": item.get("id"),
-                    "isNeedOver": "N",
-                }
-            ),
+            headers=self._headers(task, f"{self.FRONT_URL}/sub/paper/testDetail/testDetail"),
+            body=urlencode({"actId": act_id, "isNeedOver": "N"}),
             cookies=self._cookies(task),
             callback=self._parse_mokao_act_detail,
-            cb_kwargs={"task": task},
+            cb_kwargs={"task": task, "act_id": act_id},
         )
 
     def _parse_paper_list_mokao(self, response, task: dict, page: int):
         data = response.json()
-        model = data.get("model", {}).get("datas", [])
-        state_study_list = []
-        for item in model:
-            if item.get("state") == "study":
-                state_study_list.append(item)
-        if not state_study_list:
+        model = data.get("model", {})
+        datas = model.get("datas", [])
+        if not datas:
             self.logger.info(
-                "任务 %s 第 %s 页无模拟考试，列表抓取完毕", task["task_id"], page
+                "任务 %s 第 %s 页无数据，列表抓取完毕", task["task_id"], page
             )
             return
 
-        for item in state_study_list:
-            yield self._mokao_act_detail_request(item, task)
+        for item in datas:
+            if item.get("state") != "book" and item.get("typeName") == "模考":
+                yield self._mokao_act_detail_request(item["id"], task)
 
-        yield self._paper_list_mokao(task=task, page=page + 1)
+        total_pages = model.get("totalPages", 1)
+        if page < total_pages:
+            yield self._paper_list_mokao(task=task, page=page + 1)
+        else:
+            self.logger.info("任务 %s 模拟考试列表抓取完毕（共 %s 页）", task["task_id"], total_pages)
+
+    def _mokao_paper_requests(self, paper_meta: dict, task: dict, act_id: str):
+        if self.SKIP_EXISTING_PAPERS:
+            file_path = build_output_file_path(
+                subject_name=task.get("subject_name"),
+                subject_path=task.get("subject_path"),
+                paper_type_name=task["paper_type_name"],
+                paper_type=task["paper_type"],
+                paper_name=paper_meta["paperName"],
+                paper_id=paper_meta["id"],
+            )
+            if file_path.exists():
+                self.logger.info(
+                    "任务 %s 跳过已存在试卷：%s", task["task_id"], file_path
+                )
+                return
+        yield self._check_zuoti_request_mokao(paper_meta, task, act_id)
+    
+    def _check_zuoti_request_mokao(self, paper_meta: dict, task: dict, act_id: str):
+        paper_id = str(paper_meta["id"])
+        referer = f"{self.FRONT_URL}/sub/jikao/rule/rule?paperId={paper_id}&actId={act_id}&subjectPath={task['subject_path']}&lkPaperId={paper_id}"
+        return scrapy.Request(
+            url=f"{self.BASE_URL}/user/checkZuoti.do",
+            method="POST",
+            headers=self._headers(task, referer),
+            body=urlencode(
+                {
+                    "subjectPath": task["subject_path"],
+                    "paperType": task["paper_type"],
+                    "dataId": paper_id,
+                }
+            ),
+            cookies=self._cookies(task),
+            callback=self.start_exam_mokao,
+            cb_kwargs={"paper_meta": paper_meta, "task": task, "act_id": act_id},
+        )
+    
+    def start_exam_mokao(self, response, paper_meta: dict, task: dict, act_id: str):
+        body = response.json()
+        if body.get("resultCode") != "SUCCESS":
+            self.logger.warning(
+                "检查权限失败，paperId=%s，响应：%s", paper_meta["id"], response.text
+            )
+            return
+
+        key = body.get("model", {}).get("key")
+        if not key:
+            self.logger.warning("未获取到 key，paperId=%s", paper_meta["id"])
+            return
+
+        paper_id = str(paper_meta["id"])
+        paper_name = paper_meta["paperName"]
+        referer = f"{self.FRONT_URL}/sub/jikao/rule/rule?paperId={paper_id}&actId={act_id}&subjectPath={task['subject_path']}&lkPaperId={paper_id}"
+        yield scrapy.Request(
+            url=f"{self.BASE_URL}/ucenter/act/actStartExam.do",
+            method="POST",
+            headers=self._headers(task, referer),
+            body=urlencode(
+                {
+                    "actId": act_id,
+                    "paperId": paper_id,
+                    "subjectPath": task["subject_path"],
+                }
+            ),
+            cookies=self._cookies(task),
+            callback=self.load_scantron,
+            cb_kwargs={"paper_meta": paper_meta, "task": task},
+        )
 
     def _paper_list_mokao(self, task: dict, page: int):
         return scrapy.Request(
@@ -786,7 +844,9 @@ class XisaiSpider(scrapy.Spider):
     # ── 第四步：加载答题卡（含加密题目）─────────────────────
 
     def load_scantron(self, response, paper_meta: dict, task: dict):
-        paper_log_id = response.json().get("model", {}).get("paperLogId")
+        paper_log_id = response.json().get("model")
+        if isinstance(paper_log_id, dict):
+            paper_log_id = response.json().get("model", {}).get("paperLogId")
         if not paper_log_id:
             self.logger.warning(
                 "未获取到 paperLogId，paperId=%s，响应：%s",

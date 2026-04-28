@@ -142,28 +142,30 @@ XISAI_CRAWL_TASKS = [
     #     "paper_type": "60",
     #     "filter_keywords": ["2026", "2025", "2024"],
     # },
-
-
-    {
-        "subject_name": "信息系统项目管理师",
-        "exam_root_name": "软考",
-        "paper_type": "203817",
-    },
-    {
-        "subject_name": "系统架构设计师",
-        "exam_root_name": "软考",
-        "paper_type": "203817",
-    },
-    {
-        "subject_name": "系统分析师",
-        "exam_root_name": "软考",
-        "paper_type": "203817",
-    },
-    {
-        "subject_name": "软件设计师",
-        "exam_root_name": "软考",
-        "paper_type": "203817",
-    },
+    # {
+    #     "subject_name": "信息系统项目管理师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "203817",
+    #     "filter_keywords": ["二期"],
+    # },
+    # {
+    #     "subject_name": "系统架构设计师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "203817",
+    #     "filter_keywords": ["二期"],
+    # },
+    # {
+    #     "subject_name": "系统分析师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "203817",
+    #     "filter_keywords": ["二期"],
+    # },
+    # {
+    #     "subject_name": "软件设计师",
+    #     "exam_root_name": "软考",
+    #     "paper_type": "203817",
+    #     "filter_keywords": ["二期"],
+    # },
     {
         "subject_name": "软件评测师",
         "exam_root_name": "软考",

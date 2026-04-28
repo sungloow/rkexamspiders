@@ -12,7 +12,7 @@ logger = logging.getLogger("oems")
 
 def test_replace_xisai_pic():
     logger.info("开始替换希赛图片")
-    input_folder = "output/软件评测师"
+    input_folder = "output"
     process(input_folder=input_folder, is_xisai=True)
     logger.info("替换希赛图片完成")
 
@@ -27,8 +27,8 @@ def test_add_node():
     # )
     # logger.info(f"需要跳过的节点：{already_imported_node_list}")
 
-    sub = "软件设计师"
-    folder_path = "output/软件设计师_replaced/软件设计师"
+    sub = "希赛二期模考"
+    folder_path = "output_replaced/output"
     data_dict = create_dict_from_folder(
         folder_path, skip_keys=None
     )
@@ -36,7 +36,7 @@ def test_add_node():
     # # 生产环境 parent_lft：3198，测试环境 parent_lft：3212
     folder_path_list = folder_path.split("/")
     data = data_dict[folder_path_list[0]][folder_path_list[1]]
-    add_node_date(data, "3704")
+    add_node_date(data, "895")
     # 保存为JSON文件
     with open(
         "data/oems_node_structure_production_{}.json".format(sub),
@@ -48,14 +48,14 @@ def test_add_node():
 def test_import_xisai():
     from import_to_oems.db_pool import pool
 
-    sub = "软件设计师"
-    folder_path = "output/软件设计师_replaced/软件设计师"
+    sub = "希赛二期模考"
+    folder_path = "output_replaced/output"
 
     node_structure = read_json(f"data/oems_node_structure_production_{sub}.json")
     db = pool.connection()
 
     folder_path_list = folder_path.split("/")
-    data = node_structure[folder_path_list[0]][folder_path_list[1]][folder_path_list[2]]
+    data = node_structure[folder_path_list[0]][folder_path_list[1]]
     import_process(data, folder_path, is_xisai=True, db=db)
     db.close()
 
